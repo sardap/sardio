@@ -402,28 +402,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "backend"
-version = "0.1.0"
-dependencies = [
- "actix-files",
- "actix-web",
- "askama",
- "askama_web",
- "async-stream",
- "bytes",
- "chrono",
- "dotenvy",
- "env_logger",
- "fastrand",
- "lazy_static",
- "lofty",
- "log",
- "regex",
- "serde",
- "tokio",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1492,6 +1470,28 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "sardio"
+version = "0.1.0"
+dependencies = [
+ "actix-files",
+ "actix-web",
+ "askama",
+ "askama_web",
+ "async-stream",
+ "bytes",
+ "chrono",
+ "dotenvy",
+ "env_logger",
+ "fastrand",
+ "lazy_static",
+ "lofty",
+ "log",
+ "regex",
+ "serde",
+ "tokio",
+]
 
 [[package]]
 name = "scopeguard"
