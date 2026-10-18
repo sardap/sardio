@@ -1,7 +1,3 @@
-<!-- The stream is live and can't be seeked, so it's only connected while
-     playing: play sets src (the server bursts a backlog so it starts fast)
-     and pause removes it, which drops the connection. load() cancels the
-     queued pause event, so emptied also clears the playing state. -->
 <audio id="background-audio" data-src="/station/{{ station }}/play"
     hx-on:play="document.querySelector('.centered').classList.add('playing')"
     hx-on:pause="document.querySelector('.centered').classList.remove('playing')"

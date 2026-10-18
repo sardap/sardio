@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex as StdMutex},
-    time::Duration,
 };
 
 use bytes::Bytes;
@@ -172,7 +171,7 @@ impl StationRunner {
                 + chrono::Duration::seconds(rng.i64(0..60));
 
             let loops = if duration > max_song_time {
-                1i32
+                0i32
             } else {
                 (max_song_time.num_milliseconds() as f32 / duration.num_milliseconds() as f32)
                     .floor()

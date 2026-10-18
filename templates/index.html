@@ -37,6 +37,10 @@
                 display: none;
             }
             .play-button {
+                /* Sized to the image so a long song title wraps underneath
+                   instead of widening the button and pushing the image left. */
+                width: min(70vw, 400px);
+                box-sizing: content-box;
                 padding: 0.375rem 0.75rem;
                 font: inherit;
                 font-size: 1rem;
@@ -57,8 +61,11 @@
             }
             .play-button img {
                 display: block;
-                width: min(70vw, 400px);
+                width: 100%;
                 height: auto;
+            }
+            .play-label {
+                overflow-wrap: anywhere;
             }
         </style>
         <script src="/static/htmx.js"></script>
@@ -79,8 +86,6 @@
                     {% endfor %}
                 </select>
             </div>
-            <!-- htmx events bubble, so the hooks below check event.target to
-                 ignore requests from inside the player (like the /now poll). -->
             <div
                 id="player"
                 hx-get="/front/player"

@@ -1,25 +1,18 @@
 mod station;
 
 use dotenvy::dotenv;
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, io::SeekFrom, path::PathBuf, process::Stdio, str::FromStr};
+use serde::Deserialize;
+use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
 use actix_files::{Files, NamedFile};
 use actix_web::{
-    App, HttpResponse, HttpServer, Responder, get, post,
+    App, HttpResponse, HttpServer, Responder, get,
     web::{self, resource},
 };
 use askama::Template;
 use askama_web::WebTemplate;
-use bytes::Bytes;
-use chrono::{Datelike, Timelike};
 use lazy_static::lazy_static;
-use tokio::{
-    fs::File,
-    io::{AsyncReadExt, AsyncSeekExt},
-    process::Command,
-    sync::broadcast,
-};
+use tokio::sync::broadcast;
 
 use crate::station::{StationInfo, StationRunner};
 
@@ -106,10 +99,7 @@ struct PlayerQuery {
     station: String,
 }
 
-async fn get_player(
-    query: web::Query<PlayerQuery>,
-    radio_states: web::Data<RadioState>,
-) -> PlayerTemplate {
+async fn get_player(query: web::Query<PlayerQuery>) -> PlayerTemplate {
     let station_name = query.0.station;
 
     PlayerTemplate {
