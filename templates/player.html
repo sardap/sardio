@@ -1,0 +1,21 @@
+<!-- The stream is live and can't be seeked, so it's only connected while
+     playing: play sets src (the server bursts a backlog so it starts fast)
+     and pause removes it, which drops the connection. load() cancels the
+     queued pause event, so emptied also clears the playing state. -->
+<audio id="background-audio" data-src="/station/{{ station }}/play"
+    hx-on:play="document.querySelector('.centered').classList.add('playing')"
+    hx-on:pause="document.querySelector('.centered').classList.remove('playing')"
+    hx-on:emptied="document.querySelector('.centered').classList.remove('playing')">
+</audio>
+<button type="button" class="play-button"
+    hx-on:click="let a = document.getElementById('background-audio');
+        if (a.paused) { a.src = a.dataset.src; a.play().catch(() => {}); }
+        else { a.pause(); a.removeAttribute('src'); a.load(); }">
+    <img src="/station/{{ station }}/image.png" alt="{{ station }}" />
+    <div class="play-label">
+        <span class="when-playing"
+            hx-get="/station/{{ station }}/now"
+            hx-trigger="load, every 5s">PLAYING</span>
+        <span class="when-paused">Not playing</span>
+    </div>
+</button>

@@ -1,0 +1,22 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-files = "0.7.0"
+actix-web = "4.17.0"
+askama = "0.16.1"
+askama_web = { version = "0.16.0", features = ["actix-web-4"] }
+async-stream = "0.3.6"
+bytes = "1.12.1"
+chrono = "0.4.45"
+dotenvy = "0.15.7"
+env_logger = "0.11.11"
+fastrand = "2.5.0"
+lazy_static = "1.5.1"
+lofty = "0.25.4"
+log = "0.4.34"
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.3", features = ["full"] }
