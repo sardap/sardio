@@ -9,7 +9,10 @@ use std::{
 use bytes::Bytes;
 use chrono::{Datelike, Timelike};
 use lazy_static::lazy_static;
-use lofty::{file::AudioFile, probe::Probe};
+use lofty::{
+    file::{AudioFile, FileType, TaggedFileExt},
+    probe::Probe,
+};
 use regex::Regex;
 use tokio::{
     io::AsyncReadExt,
@@ -179,18 +182,24 @@ impl StationRunner {
             };
             log::info!("Looping {} {}", song.display(), loops);
 
+            let matches_stream = tagged_file.file_type() == FileType::Mpeg
+                && properties.audio_bitrate() == Some(64)
+                && properties.channels() == Some(1)
+                && properties.sample_rate() == Some(44100);
+            let codec_args: &[&str] = if matches_stream {
+                &["-c:a", "copy"]
+            } else {
+                &["-c:a", "libmp3lame", "-b:a", "64k", "-ac", "1", "-ar", "44100"]
+            };
+
             let mut ffmpeg = Command::new("ffmpeg")
                 .arg("-re")
                 .arg("-stream_loop")
                 .arg(loops.to_string())
                 .arg("-i")
                 .arg(&song)
-                .arg("-c:a")
-                .arg("libmp3lame")
-                .arg("-b:a")
-                .arg("64k")
-                .arg("-ac")
-                .arg("1")
+                .args(["-map", "0:a:0"])
+                .args(codec_args)
                 .arg("-f")
                 .arg("mp3")
                 .arg("pipe:1")

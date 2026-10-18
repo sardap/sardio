@@ -2,3 +2,4 @@
 .env
 /music
 music.zip
+__pycache__

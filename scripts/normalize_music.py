@@ -5,10 +5,13 @@ Uses ffmpeg's two-pass loudnorm (EBU R128): the first pass measures each
 song, the second applies a single linear gain so the song reaches the target
 loudness without changing its dynamics.
 
+Songs are also converted to the format the server streams (64k mono MP3, see
+the ffmpeg command in src/station.rs), so every output file is a .mp3.
+
 Originals are never modified. Normalized copies are written to a separate
-folder with the same station layout and filenames, and other files (like
-each station's image.png) are copied across. Point MUSIC_PATH at the output
-folder once you're happy with it.
+folder with the same station layout and filenames (apart from the extension),
+and other files (like each station's image.png) are copied across. Point
+MUSIC_PATH at the output folder once you're happy with it.
 
 Re-running skips songs that already exist in the output, so an interrupted
 run can be resumed.
@@ -27,13 +30,15 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-# Encoder settings per extension. Quality is kept high because the server
-# re-encodes to 64k mono MP3 when streaming anyway.
-ENCODERS = {
-    ".mp3": ["-c:a", "libmp3lame", "-q:a", "2"],
-    ".ogg": ["-c:a", "libvorbis", "-q:a", "6"],
-    ".m4a": ["-c:a", "aac", "-b:a", "192k"],
-}
+SONG_EXTENSIONS = {".mp3", ".ogg", ".m4a"}
+
+# Matches what the server streams (src/station.rs). A fixed sample rate keeps
+# the stream consistent when one song's MP3 data follows another's.
+ENCODE = ["-c:a", "libmp3lame", "-b:a", "64k", "-ac", "1", "-ar", "44100"]
+
+# Mix down to mono before loudnorm, so it measures and adjusts the signal
+# that's actually written. Downmixing afterwards would shift the loudness.
+MONO = "aformat=channel_layouts=mono"
 
 
 def measure(song: Path, args) -> dict:
@@ -42,7 +47,7 @@ def measure(song: Path, args) -> dict:
         [
             "ffmpeg", "-hide_banner", "-nostats", "-i", str(song),
             "-map", "0:a:0",
-            "-af", f"loudnorm=I={args.target}:TP={args.true_peak}:LRA={args.lra}:print_format=json",
+            "-af", f"{MONO},loudnorm=I={args.target}:TP={args.true_peak}:LRA={args.lra}:print_format=json",
             "-f", "null", "-",
         ],
         capture_output=True,
@@ -58,27 +63,23 @@ def measure(song: Path, args) -> dict:
 def normalize(song: Path, out: Path, args) -> str:
     stats = measure(song, args)
 
-    tmp = out.with_name(f".{out.stem}.tmp{out.suffix}")
     if stats["input_i"] == "-inf":
-        # Silent file: nothing to measure, copy it as-is.
-        shutil.copy2(song, tmp)
-        tmp.rename(out)
-        return f"copied (silent) {song}"
-
-    loudnorm = (
-        f"loudnorm=I={args.target}:TP={args.true_peak}:LRA={args.lra}"
-        f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}"
-        f":measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}"
-        f":offset={stats['target_offset']}:linear=true"
-    )
+        # Silent file: nothing to measure, so only convert it.
+        loudnorm = MONO
+    else:
+        loudnorm = (
+            f"{MONO},loudnorm=I={args.target}:TP={args.true_peak}:LRA={args.lra}"
+            f":measured_I={stats['input_i']}:measured_TP={stats['input_tp']}"
+            f":measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}"
+            f":offset={stats['target_offset']}:linear=true"
+        )
+    tmp = out.with_name(f".{out.stem}.tmp{out.suffix}")
     result = subprocess.run(
         [
             "ffmpeg", "-hide_banner", "-nostats", "-y", "-i", str(song),
             "-map", "0:a:0", "-map_metadata", "0",
             "-af", loudnorm,
-            # loudnorm works at 192 kHz internally, so set the rate back down.
-            "-ar", "48000",
-            *ENCODERS[song.suffix.lower()],
+            *ENCODE,
             str(tmp),
         ],
         capture_output=True,
@@ -91,6 +92,8 @@ def normalize(song: Path, out: Path, args) -> str:
     # Write to a temp name and rename, so an interrupted run never leaves a
     # half-written file that the next run would skip.
     tmp.rename(out)
+    if loudnorm == MONO:
+        return f"converted (silent) {song}"
     return f"{float(stats['input_i']):6.1f} LUFS -> {args.target} LUFS  {song}"
 
 
@@ -112,11 +115,14 @@ def main():
     for path in sorted(source.rglob("*")):
         if not path.is_file():
             continue
+        is_song = path.suffix.lower() in SONG_EXTENSIONS
         out = output / path.relative_to(source)
+        if is_song:
+            out = out.with_suffix(".mp3")
         out.parent.mkdir(parents=True, exist_ok=True)
         if out.exists():
             continue
-        if path.suffix.lower() in ENCODERS:
+        if is_song:
             songs.append((path, out))
         else:
             shutil.copy2(path, out)
