@@ -154,7 +154,9 @@ async fn main() -> std::io::Result<()> {
     let mut station_infos = HashMap::new();
     for station in &stations {
         let info = station.station_info().await;
-        info.purge_bad_songs().await;
+        if info.name() != "giant_bomb" {
+            info.purge_bad_songs().await;
+        }
         station_infos.insert(info.name(), info);
     }
 
