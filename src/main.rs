@@ -155,6 +155,7 @@ async fn main() -> std::io::Result<()> {
     for station in &stations {
         let info = station.station_info().await;
         if info.name() != "giant_bomb" {
+            log::info!("Checking bad songs for {}", info.name());
             info.purge_bad_songs().await;
         }
         station_infos.insert(info.name(), info);
