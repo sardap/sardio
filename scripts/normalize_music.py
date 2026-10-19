@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
-"""Normalize every song in a music folder to the same loudness.
+"""Normalize every song in a music folder to the same loudness, in place.
 
 Uses ffmpeg's two-pass loudnorm (EBU R128): the first pass measures each
 song, the second applies a single linear gain so the song reaches the target
 loudness without changing its dynamics.
 
 Songs are also converted to the format the server streams (64k mono MP3, see
-the ffmpeg command in src/station.rs), so every output file is a .mp3.
+the ffmpeg command in src/station.rs), which lets the server copy them
+straight through instead of re-encoding.
 
-Originals are never modified. Normalized copies are written to a separate
-folder with the same station layout and filenames (apart from the extension),
-and other files (like each station's image.png) are copied across. Point
-MUSIC_PATH at the output folder once you're happy with it.
+Each song is REPLACED by its normalized .mp3 version: an .mp3 is overwritten,
+and an .ogg/.m4a is deleted once its .mp3 has been written. Other files (like
+each station's image.png) are left alone.
 
-Re-running skips songs that already exist in the output, so an interrupted
-run can be resumed.
+Safe to interrupt and re-run:
+  - Songs are written to a hidden .normalizing temp file and renamed into
+    place, so a song is never left half-written.
+  - Finished songs are tagged with the target loudness and their original
+    filename. Re-runs skip them, and finish deleting an .ogg/.m4a whose .mp3
+    was written just before an interruption.
+
+Stop the server while this runs: it can fail if a song is replaced between
+it listing the station's songs and opening one.
 
 Usage:
-    scripts/normalize_music.py music music_normalized
-    scripts/normalize_music.py music music_normalized --target -14 --jobs 4
+    scripts/normalize_music.py music
+    scripts/normalize_music.py music --target -14 --jobs 4
 """
 
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -40,12 +46,43 @@ ENCODE = ["-c:a", "libmp3lame", "-b:a", "64k", "-ac", "1", "-ar", "44100"]
 # that's actually written. Downmixing afterwards would shift the loudness.
 MONO = "aformat=channel_layouts=mono"
 
+# ID3 tags marking a finished song: the target it was normalized to, and the
+# file it was made from.
+LUFS_TAG = "normalized_lufs"
+FROM_TAG = "normalized_from"
+
+TEMP_SUFFIX = ".normalizing"
+
+
+def tags(song: Path) -> dict:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "json", str(song)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return {}
+    return {k.lower(): v for k, v in json.loads(result.stdout).get("format", {}).get("tags", {}).items()}
+
+
+def is_normalized(mp3: Path, target: float) -> bool:
+    """Whether `mp3` has already been normalized to `target`."""
+    try:
+        return float(tags(mp3).get(LUFS_TAG, "nan")) == target
+    except ValueError:
+        return False
+
+
+def was_made_from(mp3: Path, source: Path) -> bool:
+    """Whether `mp3` is the finished replacement for `source`."""
+    return tags(mp3).get(FROM_TAG) == source.name
+
 
 def measure(song: Path, args) -> dict:
     """First pass: measure the song's loudness."""
     result = subprocess.run(
         [
-            "ffmpeg", "-hide_banner", "-nostats", "-i", str(song),
+            "ffmpeg", "-hide_banner", "-nostats", "-nostdin", "-i", str(song),
             "-map", "0:a:0",
             "-af", f"{MONO},loudnorm=I={args.target}:TP={args.true_peak}:LRA={args.lra}:print_format=json",
             "-f", "null", "-",
@@ -60,7 +97,10 @@ def measure(song: Path, args) -> dict:
     return json.loads(stats[: stats.index("}") + 1])
 
 
-def normalize(song: Path, out: Path, args) -> str:
+def normalize(song: Path, args) -> str:
+    out = song.with_suffix(".mp3")
+    # Re-normalizing a converted .mp3 keeps the name of the file it came from.
+    made_from = tags(song).get(FROM_TAG, song.name) if song == out else song.name
     stats = measure(song, args)
 
     if stats["input_i"] == "-inf":
@@ -73,14 +113,17 @@ def normalize(song: Path, out: Path, args) -> str:
             f":measured_LRA={stats['input_lra']}:measured_thresh={stats['input_thresh']}"
             f":offset={stats['target_offset']}:linear=true"
         )
-    tmp = out.with_name(f".{out.stem}.tmp{out.suffix}")
+    # Not named .mp3, so the server never picks up a half-written file.
+    tmp = song.with_name(f".{song.stem}{TEMP_SUFFIX}")
     result = subprocess.run(
         [
-            "ffmpeg", "-hide_banner", "-nostats", "-y", "-i", str(song),
+            "ffmpeg", "-hide_banner", "-nostats", "-nostdin", "-y", "-i", str(song),
             "-map", "0:a:0", "-map_metadata", "0",
             "-af", loudnorm,
             *ENCODE,
-            str(tmp),
+            "-metadata", f"{LUFS_TAG}={args.target}",
+            "-metadata", f"{FROM_TAG}={made_from}",
+            "-f", "mp3", str(tmp),
         ],
         capture_output=True,
         text=True,
@@ -89,9 +132,13 @@ def normalize(song: Path, out: Path, args) -> str:
         tmp.unlink(missing_ok=True)
         raise RuntimeError(result.stderr.strip().splitlines()[-1])
 
-    # Write to a temp name and rename, so an interrupted run never leaves a
-    # half-written file that the next run would skip.
-    tmp.rename(out)
+    # Replace the original: rename over an .mp3, or write the .mp3 then delete
+    # the .ogg/.m4a. If interrupted in between, the next run sees the tagged
+    # .mp3 and finishes deleting the original.
+    tmp.replace(out)
+    if song != out:
+        song.unlink()
+
     if loudnorm == MONO:
         return f"converted (silent) {song}"
     return f"{float(stats['input_i']):6.1f} LUFS -> {args.target} LUFS  {song}"
@@ -99,38 +146,41 @@ def normalize(song: Path, out: Path, args) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("source", type=Path, help="music folder with one subfolder per station")
-    parser.add_argument("output", type=Path, help="folder to write normalized copies to")
+    parser.add_argument("music", type=Path, help="music folder with one subfolder per station")
     parser.add_argument("--target", type=float, default=-16.0, help="integrated loudness in LUFS (default: -16)")
     parser.add_argument("--true-peak", type=float, default=-1.5, help="max true peak in dBTP (default: -1.5)")
     parser.add_argument("--lra", type=float, default=11.0, help="loudness range target (default: 11)")
     parser.add_argument("--jobs", type=int, default=os.cpu_count(), help="songs to process at once (default: CPU count)")
     args = parser.parse_args()
 
-    source, output = args.source.resolve(), args.output.resolve()
-    if output == source or output.is_relative_to(source):
-        sys.exit("output must be outside the source folder")
+    # Temp files left by an interrupted run.
+    for tmp in args.music.rglob(f".*{TEMP_SUFFIX}"):
+        tmp.unlink()
 
     songs = []
-    for path in sorted(source.rglob("*")):
-        if not path.is_file():
+    claimed = set()  # .mp3 names being written this run
+    for song in sorted(args.music.rglob("*")):
+        if not song.is_file() or song.suffix.lower() not in SONG_EXTENSIONS:
             continue
-        is_song = path.suffix.lower() in SONG_EXTENSIONS
-        out = output / path.relative_to(source)
-        if is_song:
-            out = out.with_suffix(".mp3")
-        out.parent.mkdir(parents=True, exist_ok=True)
-        if out.exists():
-            continue
-        if is_song:
-            songs.append((path, out))
+        mp3 = song.with_suffix(".mp3")
+        if song == mp3:
+            if not is_normalized(song, args.target):
+                songs.append(song)
+        elif mp3.exists() and was_made_from(mp3, song):
+            # Converted before an interruption, but the original wasn't deleted yet.
+            song.unlink()
+            print(f"removed already converted {song}")
+        elif mp3.exists() or mp3 in claimed:
+            # A different song already has this .mp3 name; don't overwrite it.
+            print(f"SKIPPED {song}: {mp3.name} already exists", file=sys.stderr)
         else:
-            shutil.copy2(path, out)
+            songs.append(song)
+            claimed.add(mp3)
 
     print(f"{len(songs)} songs to normalize with {args.jobs} jobs")
     failed = 0
     with ThreadPoolExecutor(args.jobs) as pool:
-        futures = {pool.submit(normalize, song, out, args): song for song, out in songs}
+        futures = {pool.submit(normalize, song, args): song for song in songs}
         for done, future in enumerate(as_completed(futures), 1):
             try:
                 print(f"[{done}/{len(songs)}] {future.result()}", flush=True)
