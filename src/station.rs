@@ -57,14 +57,15 @@ fn song_title(file_name: &str) -> String {
     SPACES.replace_all(title.trim(), " ").into_owned()
 }
 
-fn default_true() -> bool {
-    true
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    should_loop: bool,
 }
 
-#[derive(Deserialize, Default)]
-pub struct Config {
-    #[serde(default = "default_true")]
-    should_loop: bool,
+impl Default for Config {
+    fn default() -> Self {
+        Self { should_loop: true }
+    }
 }
 
 pub struct StationInfo {
@@ -139,8 +140,9 @@ impl StationRunner {
 
     pub fn config(&self) -> Config {
         std::fs::File::open(self.path.join("config.ron"))
-            .map(|r| ron::de::from_reader(r).ok().flatten())
-            .unwrap_or_default()
+            .map(|r| ron::de::from_reader(r).ok())
+            .ok()
+            .flatten()
             .unwrap_or_default()
     }
 
@@ -156,6 +158,7 @@ impl StationRunner {
 
     pub async fn run(&mut self) {
         let mut buffer = vec![0u8; 4096];
+        let mut boot_loop = true;
 
         loop {
             let now = chrono::Utc::now();
@@ -193,7 +196,10 @@ impl StationRunner {
             let max_song_time = chrono::Duration::minutes(rng.i64(5..12))
                 + chrono::Duration::seconds(rng.i64(0..60));
 
-            let loops = if !self.config().should_loop || duration > max_song_time {
+            let config = self.config();
+
+            log::info!("loaded {:?}", config);
+            let loops = if !config.should_loop || duration > max_song_time {
                 0i32
             } else {
                 (max_song_time.num_milliseconds() as f32 / duration.num_milliseconds() as f32)
@@ -201,6 +207,13 @@ impl StationRunner {
                     .max(1.) as i32
             };
             log::info!("Looping {} {}", song.display(), loops);
+
+            let start_offset = if boot_loop {
+                boot_loop = false;
+                chrono::Duration::milliseconds(rng.i64(0..max_song_time.num_milliseconds()))
+            } else {
+                chrono::Duration::zero()
+            };
 
             let matches_stream = tagged_file.file_type() == FileType::Mpeg
                 && properties.audio_bitrate() == Some(64)
@@ -225,6 +238,8 @@ impl StationRunner {
                 .arg("-re")
                 .arg("-stream_loop")
                 .arg(loops.to_string())
+                .arg("-ss")
+                .arg(start_offset.num_seconds().to_string())
                 .arg("-i")
                 .arg(&song)
                 .args(["-map", "0:a:0"])
