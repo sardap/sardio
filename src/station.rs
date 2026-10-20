@@ -57,14 +57,49 @@ fn song_title(file_name: &str) -> String {
     SPACES.replace_all(title.trim(), " ").into_owned()
 }
 
-#[derive(Debug, Deserialize)]
+fn default_background() -> String {
+    "#555555".to_string()
+}
+
+fn default_border() -> String {
+    "#dc3545".to_string()
+}
+
+fn default_hover() -> String {
+    "#dc3545".to_string()
+}
+
+fn default_text() -> String {
+    "white".to_string()
+}
+
+fn default_should_loop() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    should_loop: bool,
+    #[serde(default = "default_should_loop")]
+    pub should_loop: bool,
+    #[serde(default = "default_background")]
+    pub background: String,
+    #[serde(default = "default_border")]
+    pub border: String,
+    #[serde(default = "default_hover")]
+    pub border_hover: String,
+    #[serde(default = "default_hover")]
+    pub text_colour: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { should_loop: true }
+        Self {
+            should_loop: true,
+            background: default_background(),
+            border: default_border(),
+            border_hover: default_hover(),
+            text_colour: default_text(),
+        }
     }
 }
 
@@ -116,6 +151,10 @@ impl StationInfo {
                 }
             }
         }
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 }
 

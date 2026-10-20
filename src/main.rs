@@ -92,6 +92,10 @@ async fn get_index(radio_states: web::Data<RadioState>) -> IndexTemplate {
 #[template(path = "player.html")]
 struct PlayerTemplate {
     station: String,
+    background_colour: String,
+    border_colour: String,
+    border_hover_colour: String,
+    text_colour: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,11 +103,24 @@ struct PlayerQuery {
     station: String,
 }
 
-async fn get_player(query: web::Query<PlayerQuery>) -> PlayerTemplate {
+async fn get_player(
+    query: web::Query<PlayerQuery>,
+    radio_states: web::Data<RadioState>,
+) -> PlayerTemplate {
     let station_name = query.0.station;
+
+    let config = radio_states
+        .get(&station_name)
+        .map(|i| i.config())
+        .cloned()
+        .unwrap_or_default();
 
     PlayerTemplate {
         station: station_name,
+        background_colour: config.background,
+        border_colour: config.border,
+        border_hover_colour: config.border_hover,
+        text_colour: config.text_colour,
     }
 }
 
@@ -154,7 +171,7 @@ async fn main() -> std::io::Result<()> {
     let mut station_infos = HashMap::new();
     for station in &stations {
         let info = station.station_info().await;
-        if info.name() != "giant_bomb" {
+        if info.name() != "giant_bomb" && false {
             log::info!("Checking bad songs for {}", info.name());
             info.purge_bad_songs().await;
         }
