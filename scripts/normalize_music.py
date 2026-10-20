@@ -10,15 +10,18 @@ the ffmpeg command in src/station.rs), which lets the server copy them
 straight through instead of re-encoding.
 
 Each song is REPLACED by its normalized .mp3 version: an .mp3 is overwritten,
-and an .ogg/.m4a is deleted once its .mp3 has been written. Other files (like
+and any other format (.ogg, .m4a, .opus, or a .webm/.mp4/.mkv video, whose first
+audio track is used) is deleted once its .mp3 has been written. Other files (like
 each station's image.png) are left alone.
 
 Safe to interrupt and re-run:
   - Songs are written to a hidden .normalizing temp file and renamed into
     place, so a song is never left half-written.
   - Finished songs are tagged with the target loudness and their original
-    filename. Re-runs skip them, and finish deleting an .ogg/.m4a whose .mp3
+    filename. Re-runs skip them, and finish deleting an original whose .mp3
     was written just before an interruption.
+  - Untagged songs already in the streamed format (written by earlier
+    versions of this script) are also skipped.
 
 Stop the server while this runs: it can fail if a song is replaced between
 it listing the station's songs and opening one.
@@ -36,7 +39,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-SONG_EXTENSIONS = {".mp3", ".ogg", ".m4a"}
+# Video files work too: only their first audio track is used.
+SONG_EXTENSIONS = {".mp3", ".ogg", ".m4a", ".opus", ".webm", ".mp4", ".mkv"}
 
 # Matches what the server streams (src/station.rs). A fixed sample rate keeps
 # the stream consistent when one song's MP3 data follows another's.
@@ -54,23 +58,46 @@ FROM_TAG = "normalized_from"
 TEMP_SUFFIX = ".normalizing"
 
 
-def tags(song: Path) -> dict:
+def probe(song: Path) -> tuple[dict, dict]:
+    """The song's tags (with lowercase keys) and its first audio stream."""
     result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format_tags", "-of", "json", str(song)],
+        [
+            "ffprobe", "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "format_tags:stream=codec_name,channels,sample_rate,bit_rate",
+            "-of", "json", str(song),
+        ],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        return {}
-    return {k.lower(): v for k, v in json.loads(result.stdout).get("format", {}).get("tags", {}).items()}
+        return {}, {}
+    info = json.loads(result.stdout)
+    tags = {k.lower(): v for k, v in info.get("format", {}).get("tags", {}).items()}
+    streams = info.get("streams") or [{}]
+    return tags, streams[0]
+
+
+def tags(song: Path) -> dict:
+    return probe(song)[0]
 
 
 def is_normalized(mp3: Path, target: float) -> bool:
     """Whether `mp3` has already been normalized to `target`."""
-    try:
-        return float(tags(mp3).get(LUFS_TAG, "nan")) == target
-    except ValueError:
-        return False
+    tags, stream = probe(mp3)
+    if LUFS_TAG in tags:
+        try:
+            return float(tags[LUFS_TAG]) == target
+        except ValueError:
+            return False
+    # Earlier versions of this script didn't tag their output. None of the
+    # original songs are 64k mono MP3s, so a file in the streamed format
+    # without the tag was already normalized by one of those versions.
+    return (
+        stream.get("codec_name") == "mp3"
+        and stream.get("channels") == 1
+        and stream.get("sample_rate") == "44100"
+        and stream.get("bit_rate") == "64000"
+    )
 
 
 def was_made_from(mp3: Path, source: Path) -> bool:
@@ -99,8 +126,11 @@ def measure(song: Path, args) -> dict:
 
 def normalize(song: Path, args) -> str:
     out = song.with_suffix(".mp3")
+    song_tags, stream = probe(song)
+    if not stream:
+        raise RuntimeError("no audio track")
     # Re-normalizing a converted .mp3 keeps the name of the file it came from.
-    made_from = tags(song).get(FROM_TAG, song.name) if song == out else song.name
+    made_from = song_tags.get(FROM_TAG, song.name) if song == out else song.name
     stats = measure(song, args)
 
     if stats["input_i"] == "-inf":
@@ -133,7 +163,7 @@ def normalize(song: Path, args) -> str:
         raise RuntimeError(result.stderr.strip().splitlines()[-1])
 
     # Replace the original: rename over an .mp3, or write the .mp3 then delete
-    # the .ogg/.m4a. If interrupted in between, the next run sees the tagged
+    # the original (.ogg, .webm, ...). If interrupted in between, the next run sees the tagged
     # .mp3 and finishes deleting the original.
     tmp.replace(out)
     if song != out:

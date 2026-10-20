@@ -14,6 +14,7 @@ use lofty::{
     probe::Probe,
 };
 use regex::Regex;
+use serde::Deserialize;
 use tokio::{
     io::AsyncReadExt,
     process::Command,
@@ -56,11 +57,22 @@ fn song_title(file_name: &str) -> String {
     SPACES.replace_all(title.trim(), " ").into_owned()
 }
 
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Deserialize, Default)]
+pub struct Config {
+    #[serde(default = "default_true")]
+    should_loop: bool,
+}
+
 pub struct StationInfo {
     path: PathBuf,
     data_tx: Sender<Bytes>,
     backlog: Arc<StdMutex<Backlog>>,
     playing_now: Arc<Mutex<String>>,
+    config: Config,
 }
 
 impl StationInfo {
@@ -125,12 +137,20 @@ impl StationRunner {
         }
     }
 
+    pub fn config(&self) -> Config {
+        std::fs::File::open(self.path.join("config.ron"))
+            .map(|r| ron::de::from_reader(r).ok().flatten())
+            .unwrap_or_default()
+            .unwrap_or_default()
+    }
+
     pub async fn station_info(&self) -> StationInfo {
         StationInfo {
             path: self.path.clone(),
             data_tx: self.tx.clone(),
             backlog: self.backlog.clone(),
             playing_now: self.playing_now.clone(),
+            config: self.config(),
         }
     }
 
@@ -173,7 +193,7 @@ impl StationRunner {
             let max_song_time = chrono::Duration::minutes(rng.i64(5..12))
                 + chrono::Duration::seconds(rng.i64(0..60));
 
-            let loops = if duration > max_song_time {
+            let loops = if !self.config().should_loop || duration > max_song_time {
                 0i32
             } else {
                 (max_song_time.num_milliseconds() as f32 / duration.num_milliseconds() as f32)
@@ -189,7 +209,16 @@ impl StationRunner {
             let codec_args: &[&str] = if matches_stream {
                 &["-c:a", "copy"]
             } else {
-                &["-c:a", "libmp3lame", "-b:a", "64k", "-ac", "1", "-ar", "44100"]
+                &[
+                    "-c:a",
+                    "libmp3lame",
+                    "-b:a",
+                    "64k",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "44100",
+                ]
             };
 
             let mut ffmpeg = Command::new("ffmpeg")
