@@ -21,3 +21,4 @@ regex = "1.13.1"
 ron = "0.12.2"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.3", features = ["full"] }
+walkdir = "2.5.0"

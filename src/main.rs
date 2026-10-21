@@ -71,7 +71,14 @@ async fn station_now(
     radio_states: web::Data<RadioState>,
 ) -> impl Responder {
     match radio_states.get(&name.into_inner()) {
-        Some(station) => HttpResponse::Ok().body(station.playing_now().await),
+        Some(station) => {
+            let playing = if station.config().hide_playing {
+                "????".to_string()
+            } else {
+                station.playing_now().await
+            };
+            HttpResponse::Ok().body(playing)
+        }
         None => HttpResponse::NotFound().body("not found"),
     }
 }

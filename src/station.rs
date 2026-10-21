@@ -57,6 +57,13 @@ fn song_title(file_name: &str) -> String {
     SPACES.replace_all(title.trim(), " ").into_owned()
 }
 
+#[derive(Debug, Deserialize, Clone, Default)]
+pub enum SourceMethod {
+    #[default]
+    Direct,
+    Split(Vec<String>),
+}
+
 fn default_background() -> String {
     "#555555".to_string()
 }
@@ -89,6 +96,10 @@ pub struct Config {
     pub border_hover: String,
     #[serde(default = "default_hover")]
     pub text_colour: String,
+    #[serde(default = "SourceMethod::default")]
+    pub source_method: SourceMethod,
+    #[serde(default)]
+    pub hide_playing: bool,
 }
 
 impl Default for Config {
@@ -99,6 +110,8 @@ impl Default for Config {
             border: default_border(),
             border_hover: default_hover(),
             text_colour: default_text(),
+            source_method: Default::default(),
+            hide_playing: false,
         }
     }
 }
@@ -163,6 +176,7 @@ pub struct StationRunner {
     tx: Sender<Bytes>,
     backlog: Arc<StdMutex<Backlog>>,
     playing_now: Arc<Mutex<String>>,
+    songs: Vec<PathBuf>,
 }
 
 impl StationRunner {
@@ -170,18 +184,36 @@ impl StationRunner {
         let (tx, _) = broadcast::channel::<Bytes>(1024);
 
         Self {
-            path: PathBuf::new().join(path),
+            path: PathBuf::new().join(&path),
             tx,
             backlog: Arc::default(),
             playing_now: Arc::new(Mutex::new(String::default())),
+            songs: {
+                let mut files: Vec<_> = walkdir::WalkDir::new(&path)
+                    .into_iter()
+                    .filter_map(|i| i.ok())
+                    .filter(|i| match i.path().extension() {
+                        None => false,
+                        Some(ext) => {
+                            [OsStr::new("ogg"), OsStr::new("mp3"), OsStr::new("m4a")].contains(&ext)
+                        }
+                    })
+                    .map(|i| i.path().into())
+                    .collect();
+
+                files.sort();
+
+                files
+            },
         }
     }
 
     pub fn config(&self) -> Config {
         std::fs::File::open(self.path.join("config.ron"))
-            .map(|r| ron::de::from_reader(r).ok())
-            .ok()
-            .flatten()
+            .map(|r| match ron::de::from_reader(r) {
+                Ok(x) => x,
+                Err(err) => panic!("{} {}", self.path.display(), err),
+            })
             .unwrap_or_default()
     }
 
@@ -214,7 +246,7 @@ impl StationRunner {
 
             let mut rng = fastrand::Rng::with_seed(current_seed);
 
-            let song = rng.choice(self.get_songs()).unwrap();
+            let song = self.pick_song(&mut rng);
             {
                 let mut now = self.playing_now.lock().await;
                 *now = song
@@ -313,22 +345,27 @@ impl StationRunner {
         }
     }
 
-    pub fn get_songs(&self) -> Vec<PathBuf> {
-        let mut files: Vec<_> = std::fs::read_dir(&self.path)
-            .unwrap()
-            .filter_map(|i| i.ok())
-            .filter(|i| match i.path().extension() {
-                None => false,
-                Some(ext) => {
-                    [OsStr::new("ogg"), OsStr::new("mp3"), OsStr::new("m4a")].contains(&ext)
+    pub fn pick_song(&self, rng: &mut fastrand::Rng) -> PathBuf {
+        match self.config().source_method {
+            SourceMethod::Direct => rng.choice(&self.songs).unwrap().clone(),
+            SourceMethod::Split(dir_splits) => {
+                let dir = rng.choice(dir_splits).unwrap();
+
+                let mut chosen = rng.choice(&self.songs).unwrap();
+                for _ in 0..1000 {
+                    if self
+                        .path
+                        .components()
+                        .any(|i| i.as_os_str().to_str().unwrap() == dir.as_str())
+                    {
+                        break;
+                    }
+                    chosen = rng.choice(&self.songs).unwrap();
                 }
-            })
-            .map(|i| i.path())
-            .collect();
 
-        files.sort();
-
-        files
+                chosen.clone()
+            }
+        }
     }
 }
 
