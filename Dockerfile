@@ -1,4 +1,4 @@
-FROM rust:1.99.1-trixie AS backend-builder
+FROM rust:trixie AS backend-builder
 
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends g++ libssl-dev pkg-config
