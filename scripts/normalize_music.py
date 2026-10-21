@@ -14,6 +14,13 @@ and any other format (.ogg, .m4a, .opus, or a .webm/.mp4/.mkv video, whose first
 audio track is used) is deleted once its .mp3 has been written. Other files (like
 each station's image.png) are left alone.
 
+Songs shorter than --min-length seconds (default 60) are DELETED.
+
+Large libraries (tens of thousands of songs) start straight away: the folder
+scan only lists files, and every ffprobe/ffmpeg call runs in the worker pool.
+Already-normalized songs aren't printed; a progress line is shown every
+--progress-every songs instead.
+
 Safe to interrupt and re-run:
   - Songs are written to a hidden .normalizing temp file and renamed into
     place, so a song is never left half-written.
@@ -29,6 +36,7 @@ it listing the station's songs and opening one.
 Usage:
     scripts/normalize_music.py music
     scripts/normalize_music.py music --target -14 --jobs 4
+    scripts/normalize_music.py music --min-length 0   # keep short songs
 """
 
 import argparse
@@ -58,32 +66,34 @@ FROM_TAG = "normalized_from"
 TEMP_SUFFIX = ".normalizing"
 
 
-def probe(song: Path) -> tuple[dict, dict]:
-    """The song's tags (with lowercase keys) and its first audio stream."""
+def probe(song: Path) -> tuple[dict, dict, float | None]:
+    """The song's tags (with lowercase keys), its first audio stream, and its
+    length in seconds (None if ffprobe can't tell)."""
     result = subprocess.run(
         [
             "ffprobe", "-v", "error", "-select_streams", "a:0",
-            "-show_entries", "format_tags:stream=codec_name,channels,sample_rate,bit_rate",
+            "-show_entries", "format=duration:format_tags:stream=codec_name,channels,sample_rate,bit_rate",
             "-of", "json", str(song),
         ],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        return {}, {}
+        return {}, {}, None
     info = json.loads(result.stdout)
-    tags = {k.lower(): v for k, v in info.get("format", {}).get("tags", {}).items()}
+    fmt = info.get("format", {})
+    tags = {k.lower(): v for k, v in fmt.get("tags", {}).items()}
     streams = info.get("streams") or [{}]
-    return tags, streams[0]
+    try:
+        duration = float(fmt["duration"])
+    except (KeyError, ValueError):
+        duration = None
+    return tags, streams[0], duration
 
 
-def tags(song: Path) -> dict:
-    return probe(song)[0]
-
-
-def is_normalized(mp3: Path, target: float) -> bool:
-    """Whether `mp3` has already been normalized to `target`."""
-    tags, stream = probe(mp3)
+def is_normalized(tags: dict, stream: dict, target: float) -> bool:
+    """Whether an .mp3 with these tags and audio stream has already been
+    normalized to `target`."""
     if LUFS_TAG in tags:
         try:
             return float(tags[LUFS_TAG]) == target
@@ -98,11 +108,6 @@ def is_normalized(mp3: Path, target: float) -> bool:
         and stream.get("sample_rate") == "44100"
         and stream.get("bit_rate") == "64000"
     )
-
-
-def was_made_from(mp3: Path, source: Path) -> bool:
-    """Whether `mp3` is the finished replacement for `source`."""
-    return tags(mp3).get(FROM_TAG) == source.name
 
 
 def measure(song: Path, args) -> dict:
@@ -124,11 +129,30 @@ def measure(song: Path, args) -> dict:
     return json.loads(stats[: stats.index("}") + 1])
 
 
-def normalize(song: Path, args) -> str:
+class Skipped(Exception):
+    """A song left alone on purpose; reported, but not counted as a failure."""
+
+
+def process(song: Path, mp3_existed: bool, args) -> str | None:
+    """Handle one song. Returns what was done, or None if nothing was needed."""
     out = song.with_suffix(".mp3")
-    song_tags, stream = probe(song)
+    if song != out and mp3_existed:
+        # Its .mp3 was there when the folder was scanned: either this song
+        # was converted before an interruption but not deleted yet, or a
+        # different song already has that .mp3 name.
+        if probe(out)[0].get(FROM_TAG) == song.name:
+            song.unlink()
+            return f"removed already converted {song}"
+        raise Skipped(f"{out.name} already exists")
+
+    song_tags, stream, duration = probe(song)
     if not stream:
         raise RuntimeError("no audio track")
+    if duration is not None and duration < args.min_length:
+        song.unlink()
+        return f"deleted short song ({duration:.0f}s) {song}"
+    if song == out and is_normalized(song_tags, stream, args.target):
+        return None
     # Re-normalizing a converted .mp3 keeps the name of the file it came from.
     made_from = song_tags.get(FROM_TAG, song.name) if song == out else song.name
     stats = measure(song, args)
@@ -181,42 +205,55 @@ def main():
     parser.add_argument("--true-peak", type=float, default=-1.5, help="max true peak in dBTP (default: -1.5)")
     parser.add_argument("--lra", type=float, default=11.0, help="loudness range target (default: 11)")
     parser.add_argument("--jobs", type=int, default=os.cpu_count(), help="songs to process at once (default: CPU count)")
+    parser.add_argument("--min-length", type=float, default=60.0, help="delete songs shorter than this many seconds; 0 keeps all (default: 60)")
+    parser.add_argument("--progress-every", type=int, default=500, help="print a progress line every N songs checked (default: 500)")
     args = parser.parse_args()
 
-    # Temp files left by an interrupted run.
-    for tmp in args.music.rglob(f".*{TEMP_SUFFIX}"):
-        tmp.unlink()
+    # Only list files here (no ffprobe), so startup stays quick on huge
+    # libraries. Everything that needs to open a song happens in the pool.
+    files = []
+    for root, _, names in os.walk(args.music):
+        for name in names:
+            path = Path(root, name)
+            if name.endswith(TEMP_SUFFIX):
+                path.unlink()  # left by an interrupted run
+            elif path.suffix.lower() in SONG_EXTENSIONS:
+                files.append(path)
+    files.sort()
+    existing = set(files)
 
-    songs = []
+    songs = []  # (song, whether its .mp3 already existed)
     claimed = set()  # .mp3 names being written this run
-    for song in sorted(args.music.rglob("*")):
-        if not song.is_file() or song.suffix.lower() not in SONG_EXTENSIONS:
-            continue
+    for song in files:
         mp3 = song.with_suffix(".mp3")
-        if song == mp3:
-            if not is_normalized(song, args.target):
-                songs.append(song)
-        elif mp3.exists() and was_made_from(mp3, song):
-            # Converted before an interruption, but the original wasn't deleted yet.
-            song.unlink()
-            print(f"removed already converted {song}")
-        elif mp3.exists() or mp3 in claimed:
-            # A different song already has this .mp3 name; don't overwrite it.
-            print(f"SKIPPED {song}: {mp3.name} already exists", file=sys.stderr)
+        if song == mp3 or mp3 in existing:
+            songs.append((song, mp3 in existing))
+        elif mp3 in claimed:
+            # Two originals (say a.webm and a.ogg) would both become a.mp3.
+            print(f"SKIPPED {song}: {mp3.name} is already being written", file=sys.stderr)
         else:
-            songs.append(song)
+            songs.append((song, False))
             claimed.add(mp3)
 
-    print(f"{len(songs)} songs to normalize with {args.jobs} jobs")
+    total = len(songs)
+    print(f"{total} songs to check with {args.jobs} jobs", flush=True)
     failed = 0
+    changed = 0
     with ThreadPoolExecutor(args.jobs) as pool:
-        futures = {pool.submit(normalize, song, args): song for song in songs}
+        futures = {pool.submit(process, song, mp3_existed, args): song for song, mp3_existed in songs}
         for done, future in enumerate(as_completed(futures), 1):
             try:
-                print(f"[{done}/{len(songs)}] {future.result()}", flush=True)
+                result = future.result()
+                if result:
+                    changed += 1
+                    print(f"[{done}/{total}] {result}", flush=True)
+            except Skipped as e:
+                print(f"[{done}/{total}] SKIPPED {futures[future]}: {e}", file=sys.stderr, flush=True)
             except Exception as e:
                 failed += 1
-                print(f"[{done}/{len(songs)}] FAILED {futures[future]}: {e}", file=sys.stderr, flush=True)
+                print(f"[{done}/{total}] FAILED {futures[future]}: {e}", file=sys.stderr, flush=True)
+            if done % args.progress_every == 0 or done == total:
+                print(f"[{done}/{total}] checked, {changed} changed, {failed} failed", flush=True)
 
     if failed:
         sys.exit(f"{failed} songs failed")

@@ -147,7 +147,7 @@ impl StationInfo {
     }
 
     pub fn image_path(&self) -> PathBuf {
-        self.path.join("image.png")
+        self.path.join("image.webp")
     }
 
     pub async fn purge_bad_songs(&self) {
