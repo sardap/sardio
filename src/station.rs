@@ -264,7 +264,7 @@ impl StationRunner {
             let properties = tagged_file.properties();
             let duration = chrono::Duration::from_std(properties.duration()).unwrap();
 
-            let max_song_time = chrono::Duration::minutes(rng.i64(5..12))
+            let max_song_time = chrono::Duration::minutes(rng.i64(3..6))
                 + chrono::Duration::seconds(rng.i64(0..60));
 
             let config = self.config();
@@ -350,20 +350,18 @@ impl StationRunner {
             SourceMethod::Direct => rng.choice(&self.songs).unwrap().clone(),
             SourceMethod::Split(dir_splits) => {
                 let dir = rng.choice(dir_splits).unwrap();
+                let dir_os_str = OsStr::new(&dir);
 
-                let mut chosen = rng.choice(&self.songs).unwrap();
-                for _ in 0..1000 {
-                    if self
-                        .path
-                        .components()
-                        .any(|i| i.as_os_str().to_str().unwrap() == dir.as_str())
-                    {
-                        break;
-                    }
-                    chosen = rng.choice(&self.songs).unwrap();
+                let possible: Vec<_> = self
+                    .songs
+                    .iter()
+                    .filter(|i| i.components().any(|j| j.as_os_str() == dir_os_str))
+                    .collect();
+
+                match rng.choice(&possible).cloned() {
+                    Some(i) => i.clone(),
+                    None => rng.choice(&self.songs).unwrap().clone(),
                 }
-
-                chosen.clone()
             }
         }
     }
