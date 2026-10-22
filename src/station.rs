@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex as StdMutex},
+    thread::JoinHandle,
 };
 
 use bytes::Bytes;
@@ -22,6 +23,7 @@ use tokio::{
         Mutex,
         broadcast::{self, Receiver, Sender},
     },
+    time::Instant,
 };
 
 lazy_static! {
@@ -55,6 +57,17 @@ fn song_title(file_name: &str) -> String {
     let title = SONG_SUFFIX.replace(file_name, "");
     let title = title.replace('\u{FF1A}', ":").replace('\u{29F8}', "/");
     SPACES.replace_all(title.trim(), " ").into_owned()
+}
+
+fn copy_file_non_blocking<S: AsRef<Path>, T: AsRef<Path>>(source: S, target: T) -> JoinHandle<()> {
+    let source: PathBuf = PathBuf::new().join(source);
+    let target: PathBuf = PathBuf::new().join(target);
+    std::thread::spawn(|| {
+        std::process::Command::new("cp")
+            .arg(source)
+            .arg(target)
+            .status();
+    })
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -171,17 +184,42 @@ impl StationInfo {
     }
 }
 
+struct CachedSong {
+    original_path: Option<PathBuf>,
+    cached_path: PathBuf,
+    copy_job: Option<JoinHandle<()>>,
+    created: Instant,
+}
+
+impl CachedSong {
+    pub fn copy<P: AsRef<Path>>(&mut self, target: P) {
+        let copy = copy_file_non_blocking(target.as_ref(), &self.cached_path);
+        self.original_path = Some(target.as_ref().join(""));
+        self.copy_job = Some(copy);
+        self.created = Instant::now();
+    }
+
+    pub fn wait_copy(&mut self) {
+        let copy_job = self.copy_job.take().unwrap();
+        let _ = copy_job.join();
+        self.original_path.take();
+    }
+}
+
 pub struct StationRunner {
     path: PathBuf,
     tx: Sender<Bytes>,
     backlog: Arc<StdMutex<Backlog>>,
     playing_now: Arc<Mutex<String>>,
     songs: Vec<PathBuf>,
+    cached_songs: Vec<CachedSong>,
 }
 
 impl StationRunner {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         let (tx, _) = broadcast::channel::<Bytes>(1024);
+
+        let _ = std::fs::create_dir(PathBuf::new().join(std::env::temp_dir()).join("sardio"));
 
         Self {
             path: PathBuf::new().join(&path),
@@ -205,6 +243,28 @@ impl StationRunner {
 
                 files
             },
+            cached_songs: {
+                let name = path
+                    .as_ref()
+                    .file_name()
+                    .map(|i| i.to_str())
+                    .flatten()
+                    .map(|i| i.to_string())
+                    .unwrap_or_default();
+
+                (0..2)
+                    .into_iter()
+                    .map(|i| CachedSong {
+                        original_path: None,
+                        cached_path: PathBuf::new()
+                            .join(std::env::temp_dir())
+                            .join("sardio")
+                            .join(format!("{}_{}.mp3", name, i)),
+                        copy_job: None,
+                        created: Instant::now(),
+                    })
+                    .collect()
+            },
         }
     }
 
@@ -227,36 +287,54 @@ impl StationRunner {
         }
     }
 
+    fn get_next_cache_file(&mut self) -> &mut CachedSong {
+        self.cached_songs
+            .iter_mut()
+            .filter(|i| i.original_path.is_none())
+            .next()
+            .unwrap()
+    }
+
+    fn get_current_cache_file(&mut self) -> &mut CachedSong {
+        self.cached_songs
+            .iter_mut()
+            .filter(|i| i.original_path.is_some())
+            .min_by(|a, b| a.created.cmp(&b.created))
+            .unwrap()
+    }
+
     pub async fn run(&mut self) {
         let mut buffer = vec![0u8; 4096];
         let mut boot_loop = true;
+        let mut rng = fastrand::Rng::new();
+
+        let next_song = self.pick_song(&mut rng);
+        let cached = self.get_next_cache_file();
+        cached.copy(next_song);
 
         loop {
-            let now = chrono::Utc::now();
-            let current_seed: u64 = format!(
-                "{}{}{}{}{}",
-                now.year(),
-                now.month0(),
-                now.day0(),
-                now.hour(),
-                now.minute()
-            )
-            .parse()
-            .unwrap();
-
-            let mut rng = fastrand::Rng::with_seed(current_seed);
-
-            let song = self.pick_song(&mut rng);
+            {
+                let next_song = self.pick_song(&mut rng);
+                let cached = self.get_next_cache_file();
+                cached.copy(next_song);
+            }
+            let (original_path, cached_path) = {
+                let song = self.get_current_cache_file();
+                let original_path = song.original_path.as_ref().unwrap().clone();
+                let cached_path = song.cached_path.clone();
+                song.wait_copy();
+                (original_path, cached_path)
+            };
             {
                 let mut now = self.playing_now.lock().await;
-                *now = song
+                *now = original_path
                     .file_name()
                     .map(|i| i.to_str())
                     .flatten()
                     .map(|i| i.to_string())
                     .unwrap_or_default();
             }
-            let tagged_file = Probe::open(&song)
+            let tagged_file = Probe::open(&cached_path)
                 .expect("Failed to open file")
                 .read()
                 .expect("Failed to read Ogg metadata");
@@ -277,7 +355,7 @@ impl StationRunner {
                     .floor()
                     .max(1.) as i32
             };
-            log::info!("Looping {} {}", song.display(), loops);
+            log::info!("Looping {} {}", original_path.display(), loops);
 
             let start_offset = if boot_loop {
                 boot_loop = false;
@@ -312,7 +390,7 @@ impl StationRunner {
                 .arg("-ss")
                 .arg(start_offset.num_seconds().to_string())
                 .arg("-i")
-                .arg(&song)
+                .arg(&cached_path)
                 .args(["-map", "0:a:0"])
                 .args(codec_args)
                 .arg("-f")
@@ -327,7 +405,7 @@ impl StationRunner {
             loop {
                 match stdout.read(&mut buffer).await {
                     Ok(0) => {
-                        log::info!("{} is done playing", song.display());
+                        log::info!("{} is done playing", original_path.display());
                         break;
                     }
                     Ok(n) => {
