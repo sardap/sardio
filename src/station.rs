@@ -63,7 +63,7 @@ fn copy_file_non_blocking<S: AsRef<Path>, T: AsRef<Path>>(source: S, target: T) 
     let source: PathBuf = PathBuf::new().join(source);
     let target: PathBuf = PathBuf::new().join(target);
     std::thread::spawn(|| {
-        std::process::Command::new("cp")
+        let _ = std::process::Command::new("cp")
             .arg(source)
             .arg(target)
             .status();
@@ -71,10 +71,17 @@ fn copy_file_non_blocking<S: AsRef<Path>, T: AsRef<Path>>(source: S, target: T) 
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
+pub struct SplitWeight {
+    dir: String,
+    odds: f32,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
 pub enum SourceMethod {
     #[default]
     Direct,
     Split(Vec<String>),
+    SplitWght(Vec<SplitWeight>),
 }
 
 fn default_background() -> String {
@@ -428,6 +435,30 @@ impl StationRunner {
             SourceMethod::Direct => rng.choice(&self.songs).unwrap().clone(),
             SourceMethod::Split(dir_splits) => {
                 let dir = rng.choice(dir_splits).unwrap();
+                let dir_os_str = OsStr::new(&dir);
+
+                let possible: Vec<_> = self
+                    .songs
+                    .iter()
+                    .filter(|i| i.components().any(|j| j.as_os_str() == dir_os_str))
+                    .collect();
+
+                match rng.choice(&possible).cloned() {
+                    Some(i) => i.clone(),
+                    None => rng.choice(&self.songs).unwrap().clone(),
+                }
+            }
+            SourceMethod::SplitWght(split_weights) => {
+                use weighted_rand::builder::*;
+
+                let options: Vec<_> = split_weights.iter().map(|i| &i.dir).collect();
+                let odds: Vec<_> = split_weights.iter().map(|i| i.odds).collect();
+
+                let builder = WalkerTableBuilder::new(&odds);
+                let wa_table = builder.build();
+
+                let dir = options[wa_table.next()];
+
                 let dir_os_str = OsStr::new(&dir);
 
                 let possible: Vec<_> = self

@@ -63,9 +63,9 @@
         <div class="centered">
             <div class="station-picker">
                 <label for="station-select">Station</label>
-                <select id="station-select" name="station">
+                <select id="station-select" name="station" autocomplete="off">
                     {% for station in stations %}
-                    <option value="{{ station }}">{{ station }}</option>
+                    <option value="{{ station }}"{% if station.as_str() == selected.as_str() %} selected{% endif %}>{{ station }}</option>
                     {% endfor %}
                 </select>
             </div>

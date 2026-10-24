@@ -87,11 +87,23 @@ async fn station_now(
 #[template(path = "index.html")]
 struct IndexTemplate {
     stations: Vec<String>,
+    selected: String,
 }
 
-async fn get_index(radio_states: web::Data<RadioState>) -> IndexTemplate {
+#[derive(Debug, Deserialize)]
+struct IndexQuery {
+    #[serde(default)]
+    p: Option<String>,
+}
+
+async fn get_index(
+    query: web::Query<IndexQuery>,
+    radio_states: web::Data<RadioState>,
+) -> IndexTemplate {
+    let stations = radio_states.keys();
     IndexTemplate {
-        stations: radio_states.keys(),
+        selected: query.into_inner().p.unwrap_or(stations[0].clone()),
+        stations,
     }
 }
 
