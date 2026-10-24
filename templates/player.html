@@ -55,7 +55,7 @@
         <div class="play-label">
             <span class="when-playing"
                 hx-get="/station/{{ station }}/now"
-                hx-trigger="load, every 5s">PLAYING</span>
+                hx-trigger="load, every 5s, click from:.play-button delay:100ms">PLAYING</span>
             <span class="when-paused">Not playing</span>
         </div>
     </div>
