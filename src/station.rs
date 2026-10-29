@@ -8,7 +8,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use chrono::{Datelike, Timelike};
 use lazy_static::lazy_static;
 use lofty::{
     file::{AudioFile, FileType, TaggedFileExt},
@@ -148,8 +147,7 @@ impl StationInfo {
     pub fn name(&self) -> String {
         self.path
             .file_name()
-            .map(|i| i.to_str())
-            .flatten()
+            .and_then(|i| i.to_str())
             .map(|i| i.to_string())
             .unwrap_or_default()
     }
@@ -175,7 +173,7 @@ impl StationInfo {
             .unwrap()
             .filter_map(|i| i.ok())
         {
-            if let Ok(tagged_file) = Probe::open(&song.path()).map(|i| i.read()).flatten() {
+            if let Ok(tagged_file) = Probe::open(song.path()).and_then(|i| i.read()) {
                 let properties = tagged_file.properties();
                 let duration = chrono::Duration::from_std(properties.duration()).unwrap();
                 if duration < chrono::Duration::minutes(1) {
@@ -254,8 +252,7 @@ impl StationRunner {
                 let name = path
                     .as_ref()
                     .file_name()
-                    .map(|i| i.to_str())
-                    .flatten()
+                    .and_then(|i| i.to_str())
                     .map(|i| i.to_string())
                     .unwrap_or_default();
 
@@ -297,8 +294,7 @@ impl StationRunner {
     fn get_next_cache_file(&mut self) -> &mut CachedSong {
         self.cached_songs
             .iter_mut()
-            .filter(|i| i.original_path.is_none())
-            .next()
+            .find(|i| i.original_path.is_none())
             .unwrap()
     }
 
@@ -336,8 +332,7 @@ impl StationRunner {
                 let mut now = self.playing_now.lock().await;
                 *now = original_path
                     .file_name()
-                    .map(|i| i.to_str())
-                    .flatten()
+                    .and_then(|i| i.to_str())
                     .map(|i| i.to_string())
                     .unwrap_or_default();
             }

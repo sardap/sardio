@@ -31,6 +31,7 @@ ENV PATH="$PATH:/app/sardio"
 ENV RUST_LOG="info"
 ENV MUSIC_PATH="/app/mount/music"
 ENV STATIC_PATH="/app/static"
+ENV ANALYTICS_PATH="/app/mount/analytics"
 
 WORKDIR /app/mount
 
