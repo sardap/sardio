@@ -35,6 +35,10 @@ lazy_static! {
             .unwrap()
             .canonicalize()
             .unwrap();
+    static ref HISTORY_PATH: PathBuf = PathBuf::from_str(&std::env::var("HISTORY_PATH").unwrap())
+        .unwrap()
+        .canonicalize()
+        .unwrap();
 }
 
 #[derive(Debug, Clone, Default)]

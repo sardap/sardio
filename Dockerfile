@@ -32,6 +32,7 @@ ENV RUST_LOG="info"
 ENV MUSIC_PATH="/app/mount/music"
 ENV STATIC_PATH="/app/static"
 ENV ANALYTICS_PATH="/app/mount/analytics"
+ENV HISTORY_PATH="/app/mount/history"
 
 WORKDIR /app/mount
 

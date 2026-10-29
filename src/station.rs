@@ -8,6 +8,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;
 use lofty::{
     file::{AudioFile, FileType, TaggedFileExt},
@@ -24,6 +25,8 @@ use tokio::{
     },
     time::Instant,
 };
+
+use crate::{HISTORY_PATH, MUSIC_PATH};
 
 lazy_static! {
     static ref SONG_SUFFIX: Regex =
@@ -69,6 +72,17 @@ fn copy_file_non_blocking<S: AsRef<Path>, T: AsRef<Path>>(source: S, target: T) 
             .status();
         log::info!("Copy done {} {}", source.display(), target.display());
     })
+}
+
+fn update_history<T: AsRef<Path>>(station: &str, start: DateTime<Utc>, file_name: T) {
+    let file_name: PathBuf = PathBuf::new().join(file_name);
+    let station = station.to_owned();
+    std::thread::spawn(move || {
+        let mut target = HISTORY_PATH.clone();
+        let file_name = file_name.trim_prefix(&*MUSIC_PATH);
+        target.push(format!("{}_{}.txt", station, start.timestamp()));
+        let _ = std::fs::write(target, file_name.display().to_string());
+    });
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -234,7 +248,7 @@ impl StationRunner {
             backlog: Arc::default(),
             playing_now: Arc::new(Mutex::new(String::default())),
             songs: {
-                let mut files: Vec<_> = walkdir::WalkDir::new(&path)
+                let mut files: Vec<PathBuf> = walkdir::WalkDir::new(&path)
                     .into_iter()
                     .filter_map(|i| i.ok())
                     .filter(|i| match i.path().extension() {
@@ -243,7 +257,10 @@ impl StationRunner {
                             [OsStr::new("ogg"), OsStr::new("mp3"), OsStr::new("m4a")].contains(&ext)
                         }
                     })
-                    .map(|i| i.path().into())
+                    .map(|i| {
+                        let p: PathBuf = i.path().into();
+                        p.components().collect()
+                    })
                     .collect();
 
                 files.sort();
@@ -317,6 +334,8 @@ impl StationRunner {
         let cached = self.get_next_cache_file();
         cached.copy(next_song);
 
+        let name = &self.station_info().await.name();
+
         loop {
             {
                 let next_song = self.pick_song(&mut rng);
@@ -367,6 +386,8 @@ impl StationRunner {
             } else {
                 chrono::Duration::zero()
             };
+
+            update_history(name, Utc::now(), &original_path);
 
             let matches_stream = tagged_file.file_type() == FileType::Mpeg
                 && properties.audio_bitrate() == Some(64)
