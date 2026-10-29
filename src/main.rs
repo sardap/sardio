@@ -178,8 +178,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(radio_state.clone())
             .app_data(listen_state.clone())
             .wrap(actix_web::middleware::Logger::default())
-            .service(crate::route::scope())
             .service(Files::new("/static", &*STATIC_PATH))
+            .service(crate::route::scope())
     })
     .bind(("0.0.0.0", 8080))?
     .run()
