@@ -4,6 +4,7 @@ RUN apt-get update -y && \
     apt-get install -y --no-install-recommends g++ libssl-dev pkg-config
 
 WORKDIR /app
+COPY ./rust-toolchain.toml rust-toolchain.toml
 COPY ./Cargo.toml Cargo.toml
 COPY ./Cargo.lock Cargo.lock
 COPY ./src src
