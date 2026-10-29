@@ -61,11 +61,13 @@ fn song_title(file_name: &str) -> String {
 fn copy_file_non_blocking<S: AsRef<Path>, T: AsRef<Path>>(source: S, target: T) -> JoinHandle<()> {
     let source: PathBuf = PathBuf::new().join(source);
     let target: PathBuf = PathBuf::new().join(target);
-    std::thread::spawn(|| {
+    std::thread::spawn(move || {
+        log::info!("Copy started {} {}", source.display(), target.display());
         let _ = std::process::Command::new("cp")
-            .arg(source)
-            .arg(target)
+            .arg(source.clone())
+            .arg(target.clone())
             .status();
+        log::info!("Copy done {} {}", source.display(), target.display());
     })
 }
 

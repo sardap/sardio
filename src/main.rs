@@ -45,7 +45,6 @@ pub struct ListeningState {
 impl ListeningState {
     pub async fn get_active(&self, key: &str) -> usize {
         let map = self.listeners.lock().await;
-        log::info!("ga {:?}", map);
         map.get(key).map(|i| i.len()).unwrap_or_default()
     }
 
@@ -53,7 +52,6 @@ impl ListeningState {
         let mut map = self.listeners.lock().await;
         let set = map.entry(key.to_string()).or_default();
         set.insert(id);
-        log::info!("al {:?}", map);
     }
 
     pub async fn remove_listener(&self, key: &str, id: u128) {
