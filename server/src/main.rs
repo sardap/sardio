@@ -66,12 +66,6 @@ impl ListeningState {
     }
 }
 
-#[derive(Serialize)]
-struct AnalyticsEntry {
-    start_time: i64,
-    end_time: i64,
-}
-
 struct ListenerGuard {
     listen_states: ListeningState,
     name: String,
@@ -101,18 +95,7 @@ impl Drop for ListenerGuard {
             listen_states.remove_listener(&name, id).await;
             log::info!("Removing listener for {} {}", name, id);
 
-            let uuid = uuid::Uuid::from_u128(id);
-            let mut path = ANALYTICS_PATH.join(&name);
-            let _ = tokio::fs::create_dir_all(&path).await;
-            path.push(uuid.to_string() + ".ron");
-
-            if let Ok(analytics) = ron::ser::to_string(&AnalyticsEntry {
-                start_time: start_time.timestamp(),
-                end_time: end_time.timestamp(),
-            }) {
-                log::info!("Writing to analytics {}", path.display());
-                let _ = tokio::fs::write(path, analytics).await;
-            }
+            sardio_core::save_analytics(&*ANALYTICS_PATH, id, &name, start_time, end_time).await;
         });
     }
 }

@@ -1567,6 +1567,7 @@ dependencies = [
  "log",
  "regex",
  "ron",
+ "sardio-core",
  "serde",
  "tokio",
  "uuid",
@@ -1578,7 +1579,12 @@ dependencies = [
 name = "sardio-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "log",
+ "ron",
  "serde",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

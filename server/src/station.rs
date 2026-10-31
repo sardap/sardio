@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;
 use lofty::{
     file::{AudioFile, FileType, TaggedFileExt},
@@ -78,13 +78,7 @@ fn update_history<T: AsRef<Path>>(station: &str, start: DateTime<Utc>, file_name
     let file_name: PathBuf = PathBuf::new().join(file_name);
     let station = station.to_owned();
     tokio::spawn(async move {
-        let date = format!("{}_{}_{}", start.year(), start.month0(), start.day0());
-        let mut target = HISTORY_PATH.clone().join(&station).join(date);
-        let _ = tokio::fs::create_dir_all(&target).await;
-
-        let file_name = file_name.trim_prefix(&*MUSIC_PATH);
-        target.push(format!("{}_{}.txt", station, start.timestamp()));
-        let _ = tokio::fs::write(target, file_name.display().to_string()).await;
+        sardio_core::save_history(&*HISTORY_PATH, &*MUSIC_PATH, &file_name, &station, start).await;
     });
 }
 
