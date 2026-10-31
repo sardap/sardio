@@ -1,0 +1,26 @@
+[package]
+name = "sardio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-files.workspace = true
+actix-web.workspace = true
+askama.workspace = true
+askama_web.workspace = true
+async-stream.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+dotenvy.workspace = true
+env_logger.workspace = true
+fastrand.workspace = true
+lazy_static.workspace = true
+lofty.workspace = true
+log.workspace = true
+regex.workspace = true
+ron.workspace = true
+serde.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+weighted_rand.workspace = true

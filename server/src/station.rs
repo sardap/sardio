@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use lazy_static::lazy_static;
 use lofty::{
     file::{AudioFile, FileType, TaggedFileExt},
@@ -77,11 +77,14 @@ fn copy_file_non_blocking<S: AsRef<Path>, T: AsRef<Path>>(source: S, target: T) 
 fn update_history<T: AsRef<Path>>(station: &str, start: DateTime<Utc>, file_name: T) {
     let file_name: PathBuf = PathBuf::new().join(file_name);
     let station = station.to_owned();
-    std::thread::spawn(move || {
-        let mut target = HISTORY_PATH.clone();
+    tokio::spawn(async move {
+        let date = format!("{}_{}_{}", start.year(), start.month0(), start.day0());
+        let mut target = HISTORY_PATH.clone().join(&station).join(date);
+        let _ = tokio::fs::create_dir_all(&target).await;
+
         let file_name = file_name.trim_prefix(&*MUSIC_PATH);
         target.push(format!("{}_{}.txt", station, start.timestamp()));
-        let _ = std::fs::write(target, file_name.display().to_string());
+        let _ = tokio::fs::write(target, file_name.display().to_string()).await;
     });
 }
 

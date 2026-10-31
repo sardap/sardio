@@ -3,5 +3,5 @@
 /music
 music.zip
 __pycache__
-/analytics
-/history
+/server/analytics
+/server/history

@@ -68,7 +68,6 @@ impl ListeningState {
 
 #[derive(Serialize)]
 struct AnalyticsEntry {
-    name: String,
     start_time: i64,
     end_time: i64,
 }
@@ -103,10 +102,11 @@ impl Drop for ListenerGuard {
             log::info!("Removing listener for {} {}", name, id);
 
             let uuid = uuid::Uuid::from_u128(id);
-            let path = ANALYTICS_PATH.join(uuid.to_string() + ".ron");
+            let mut path = ANALYTICS_PATH.join(&name);
+            let _ = tokio::fs::create_dir_all(&path).await;
+            path.push(uuid.to_string() + ".ron");
 
             if let Ok(analytics) = ron::ser::to_string(&AnalyticsEntry {
-                name,
                 start_time: start_time.timestamp(),
                 end_time: end_time.timestamp(),
             }) {

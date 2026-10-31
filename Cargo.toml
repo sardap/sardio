@@ -1,9 +1,13 @@
-[package]
-name = "sardio"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "sardio-core",
+    "server"
+]
+exclude = []
+resolver = "2"
 
-[dependencies]
+
+[workspace.dependencies]
 actix-files = "0.7.0"
 actix-web = "4.17.0"
 askama = "0.16.1"

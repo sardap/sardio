@@ -4,12 +4,7 @@ RUN apt-get update -y && \
     apt-get install -y --no-install-recommends g++ libssl-dev pkg-config
 
 WORKDIR /app
-COPY ./rust-toolchain.toml rust-toolchain.toml
-COPY ./Cargo.toml Cargo.toml
-COPY ./Cargo.lock Cargo.lock
-COPY ./src src
-COPY ./static static
-COPY ./templates templates
+COPY . .
 
 RUN cargo build --release
 
@@ -23,7 +18,7 @@ RUN update-ca-certificates
 
 WORKDIR /app
 COPY --from=backend-builder /app/target/release/sardio /app/sardio
-COPY ./static ./static
+COPY ./server/static ./static
 
 RUN mkdir cache
 
